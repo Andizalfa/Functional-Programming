@@ -1,81 +1,11 @@
-use image::{
-    DynamicImage, GenericImageView, ImageBuffer, Rgba,
-    ImageOutputFormat, imageops::FilterType,
-};
-use rayon::prelude::*;
-use std::io::Cursor;
+use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
 
 // =====================================================================
-// 1) Hitung posisi watermark (PURE FUNCTION)
-
-//Menerapkan fungsi pure,bertugas menghitung posisi watermark pada gambar dasar 
-// berdasarkan margin yang diberikan.
+// PUBLIC PURE API
 // =====================================================================
-pub fn compute_position( 
-    base_width: u32,
-    base_height: u32,
-    wm_width: u32,
-    wm_height: u32,
-    margin: u32,
-) -> (u32, u32) {
-    let x = base_width.saturating_sub(wm_width + margin);
-    let y = base_height.saturating_sub(wm_height + margin);
-    (x, y)
-}
-
-// =====================================================================
-// 2) Hitung warna pixel hasil blending (PURE FUNCTION)
-// =====================================================================
-// Bertugas:
-// - Mengecek apakah pixel (i, j) berada di area watermark
-// - Jika iya → lakukan alpha blending
-// - Jika tidak → kembalikan pixel asli
-
-pub fn blend_pixel( //fungsi pure untuk menghitung 1 pixel hasil.
-// Tidak menulis ke gambar, hanya mengembalikan pixel baru.
-    base: &DynamicImage,
-    watermark: &DynamicImage,
-    i: u32,
-    j: u32,
-    pos_x: u32,
-    pos_y: u32,
-    opacity: f32,
-) -> Rgba<u8> {
-
-    let base_px = base.get_pixel(i, j); //Ambil pixel asli dari gambar dasar di posisi (i, j).
-    let (ww, wh) = watermark.dimensions(); //Ambil ukuran watermark.
-
-    let is_inside_watermark =
-        i >= pos_x && i < pos_x + ww &&
-        j >= pos_y && j < pos_y + wh;
-        //Mengecek apakah pixel (i, j) berada di area watermark.
-
-    if !is_inside_watermark {
-        return base_px;
-    }
-//Jika pixel bukan area watermark → kembalikan pixel asli.
-// Tidak ada perubahan.
-
-    let wm_px = watermark.get_pixel(i - pos_x, j - pos_y);
-    // Ambil pixel watermark yang bersesuaian.
-
-    let alpha = (wm_px.0[3] as f32 * opacity) / 255.0;
-    // Hitung alpha blending:
-    // wm_px.0[3] = alpha watermark asli
-    // opacity = transparansi global
-    // Normalisasi ke rentang 0.0 – 1.0
-
-//rumus alpha blending standar:
-    Rgba([
-        (base_px.0[0] as f32 * (1.0 - alpha) + wm_px.0[0] as f32 * alpha) as u8,
-        (base_px.0[1] as f32 * (1.0 - alpha) + wm_px.0[1] as f32 * alpha) as u8,
-        (base_px.0[2] as f32 * (1.0 - alpha) + wm_px.0[2] as f32 * alpha) as u8,
-        255,
-    ])
-}
-
-// =====================================================================
-// 3) Apply watermark (FULL IMMUTABLE, PURE)
+// - Pure function
+// - Deterministic
+// - Aman dipanggil di worker process mana pun
 // =====================================================================
 pub fn apply_watermark(
     base: &DynamicImage,
@@ -83,47 +13,76 @@ pub fn apply_watermark(
     opacity: f32,
     margin: u32,
 ) -> DynamicImage {
-//Fungsi utama watermark tanpa mutasi base image.
-// Menghasilkan gambar baru.
-
     let (bw, bh) = base.dimensions();
     let (ww, wh) = watermark.dimensions();
-    let (x, y) = compute_position(bw, bh, ww, wh, margin);
+    let position = compute_position(bw, bh, ww, wh, margin);
 
-    let output = ImageBuffer::from_fn(bw, bh, |i, j| {
-        blend_pixel(base, watermark, i, j, x, y, opacity)
+    let output = ImageBuffer::from_fn(bw, bh, |x, y| {
+        blend_pixel(base, watermark, position, opacity, x, y)
     });
 
     DynamicImage::ImageRgba8(output)
 }
 
+//
 // =====================================================================
-// 4) Parallel processing (Rayon – MULTI THREAD CPU)
+// HELPER PURE FUNCTIONS (PRIVATE)
 // =====================================================================
-pub fn process_photos_parallel(
-    photos: Vec<(String, Vec<u8>)>,
-    wm_img: DynamicImage,
+//
+
+// -----------------------------------------------------
+// Hitung posisi watermark (pojok kanan bawah)
+// -----------------------------------------------------
+fn compute_position(
+    base_width: u32,
+    base_height: u32,
+    wm_width: u32,
+    wm_height: u32,
+    margin: u32,
+) -> (u32, u32) {
+    (
+        base_width.saturating_sub(wm_width + margin),
+        base_height.saturating_sub(wm_height + margin),
+    )
+}
+
+// -----------------------------------------------------
+// Blend satu pixel (PURE, no side effect)
+// -----------------------------------------------------
+fn blend_pixel(
+    base: &DynamicImage,
+    watermark: &DynamicImage,
+    (wx, wy): (u32, u32),
     opacity: f32,
-) -> Vec<(String, Vec<u8>)> {
+    x: u32,
+    y: u32,
+) -> Rgba<u8> {
 
-    photos
-        .into_par_iter() // MULTI THREAD (Rayon)
-        .map(|(filename, bytes)| {
-            let img = image::load_from_memory(&bytes).unwrap();
-            let (w, h) = img.dimensions();
+    let base_px = base.get_pixel(x, y);
+    let (ww, wh) = watermark.dimensions();
 
-            let wm_small = wm_img.resize(w / 4, h / 4, FilterType::Lanczos3);
-            let result = apply_watermark(&img, &wm_small, opacity, 20);
+    let is_inside_watermark =
+        x >= wx && x < wx + ww &&
+        y >= wy && y < wy + wh;
 
-            let out_bytes = {
-                let mut buffer = Vec::new();
-                result
-                    .write_to(&mut Cursor::new(&mut buffer), ImageOutputFormat::Png)
-                    .unwrap();
-                buffer
-            };
+    if !is_inside_watermark {
+        return base_px;
+    }
 
-            (filename, out_bytes)
-        })
-        .collect()
+    let wm_px = watermark.get_pixel(x - wx, y - wy);
+    let alpha = (wm_px.0[3] as f32 * opacity) / 255.0;
+
+    Rgba([
+        blend_channel(base_px.0[0], wm_px.0[0], alpha),
+        blend_channel(base_px.0[1], wm_px.0[1], alpha),
+        blend_channel(base_px.0[2], wm_px.0[2], alpha),
+        255,
+    ])
+}
+
+// -----------------------------------------------------
+// Blend satu channel warna (PURE matematis)
+// -----------------------------------------------------
+fn blend_channel(base: u8, wm: u8, alpha: f32) -> u8 {
+    (base as f32 * (1.0 - alpha) + wm as f32 * alpha) as u8
 }

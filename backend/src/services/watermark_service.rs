@@ -1,46 +1,30 @@
-use std::collections::HashMap;
-use crate::utils::image_ops::process_photos_parallel;
+use std::path::PathBuf;
+use std::process::Command;
+use uuid::Uuid;
 
-// =====================================================================
-// TYPE DEFINITIONS (IMMUTABLE DATA CONTRACT)
-// =====================================================================
+pub fn process_multiprocess(
+    images: Vec<PathBuf>,
+    watermark: PathBuf,
+) -> Vec<PathBuf> {
 
-pub type FileBytes = (String, Vec<u8>);
-pub type PayloadMap = HashMap<String, Vec<FileBytes>>;
+    images
+        .into_iter()
+        .map(|img| {
+            let output = PathBuf::from(format!("tmp/{}.png", Uuid::new_v4()));
 
-// =====================================================================
-// PUBLIC SERVICE FUNCTION
-// - 100% IMMUTABLE
-// - NO mut
-// - NO stateful IO
-// =====================================================================
-pub fn process_payload(payload: PayloadMap) -> Vec<(String, Vec<u8>)> {
+            Command::new("cargo")
+                .args([
+                    "run",
+                    "--bin",
+                    "watermark_worker",
+                    img.to_str().unwrap(),
+                    watermark.to_str().unwrap(),
+                    output.to_str().unwrap(),
+                ])
+                .spawn()
+                .expect("Gagal spawn worker process");
 
-    let watermark = extract_watermark(&payload);
-    let photos = extract_photos(&payload);
-
-    match (photos, watermark) {
-        (Some(p), Some(wm)) => process_photos_parallel(p, wm, 0.5),
-        _ => Vec::new(),
-    }
-}
-
-// =====================================================================
-// EXTRACT WATERMARK IMAGE
-// =====================================================================
-fn extract_watermark(payload: &PayloadMap) -> Option<image::DynamicImage> {
-    payload
-        .get("watermark")
-        .and_then(|v| v.first())
-        .and_then(|(_, bytes)| image::load_from_memory(bytes).ok())
-}
-
-// =====================================================================
-// EXTRACT PHOTOS LIST
-// =====================================================================
-fn extract_photos(payload: &PayloadMap) -> Option<Vec<FileBytes>> {
-    payload
-        .get("photos")
-        .or(payload.get("photos[]"))
-        .cloned()
+            output
+        })
+        .collect()
 }

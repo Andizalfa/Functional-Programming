@@ -1,15 +1,22 @@
-use axum::extract::Multipart;
-use crate::services::watermark_service;
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use crate::services::watermark_service::process_multiprocess;
+use std::path::PathBuf;
 
-pub async fn process_watermark(multipart: Multipart) -> impl axum::response::IntoResponse {
-    let zip_bytes = watermark_service::process(multipart).await;
+pub async fn process_watermark() -> impl IntoResponse {
+
+    // contoh (biasanya dari multipart handler)
+    let images = vec![
+        PathBuf::from("tmp/img1.png"),
+        PathBuf::from("tmp/img2.png"),
+    ];
+
+    let watermark = PathBuf::from("tmp/watermark.png");
+
+    let results = process_multiprocess(images, watermark);
 
     (
-        axum::http::StatusCode::OK,
-        [
-            ("Content-Type", "application/zip"),
-            ("Content-Disposition", "attachment; filename=\"hasil_watermark.zip\"")
-        ],
-        zip_bytes
+        StatusCode::OK,
+        format!("Diproses {} file secara MULTIPROCESSING", results.len()),
     )
 }
