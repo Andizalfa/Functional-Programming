@@ -10,7 +10,8 @@ async fn main() {
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any)
-        .expose_headers(["x-process-time".parse::<axum::http::HeaderName>().unwrap()]);
+        .expose_headers([axum::http::HeaderName::from_static("x-process-time")]);
+
     
     let app = Router::new()
         .nest("/api", routes::routes())

@@ -1,80 +1,147 @@
-use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, imageops::FilterType};
+use image::{
+    imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Pixel, Rgba,
+};
 
+use crate::utils::error::AppError;
+
+/* =========================================================
+   CONSTANTS
+   ========================================================= */
+
+/// Rasio lebar watermark terhadap lebar gambar dasar
+const WATERMARK_RATIO: f32 = 0.20;
+
+/* =========================================================
+   SINGLE-PURPOSE PURE HELPERS
+   ========================================================= */
+
+/// Clamp nilai float ke rentang 0.0..=1.0
+fn clamp01(x: f32) -> f32 {
+    x.clamp(0.0, 1.0)
+}
+
+/// Pastikan nilai minimal 1 (menghindari ukuran 0px)
+fn max1(v: u32) -> u32 {
+    if v == 0 { 1 } else { v }
+}
+
+/// Hitung posisi watermark di pojok kanan bawah dengan margin
+fn bottom_right_position(
+    base_w: u32,
+    base_h: u32,
+    wm_w: u32,
+    wm_h: u32,
+    margin: u32,
+) -> (u32, u32) {
+    (
+        base_w.saturating_sub(wm_w.saturating_add(margin)),
+        base_h.saturating_sub(wm_h.saturating_add(margin)),
+    )
+}
+
+/// Blend satu channel warna
+fn blend_channel(base: u8, wm: u8, alpha: f32) -> u8 {
+    let b = base as f32;
+    let w = wm as f32;
+
+    ((b * (1.0 - alpha) + w * alpha).round())
+        .clamp(0.0, 255.0) as u8
+}
+
+/// Blend dua pixel RGBA berdasarkan alpha watermark
+fn blend_rgba(base: Rgba<u8>, wm: Rgba<u8>, opacity: f32) -> Rgba<u8> {
+    let alpha = (wm[3] as f32 / 255.0) * opacity;
+
+    Rgba([
+        blend_channel(base[0], wm[0], alpha),
+        blend_channel(base[1], wm[1], alpha),
+        blend_channel(base[2], wm[2], alpha),
+        255,
+    ])
+}
+
+/// Ambil pixel watermark jika (x,y) berada di area watermark
+fn watermark_pixel_at(
+    watermark: &DynamicImage,
+    (wx, wy): (u32, u32),
+    x: u32,
+    y: u32,
+) -> Option<Rgba<u8>> {
+    let (ww, wh) = watermark.dimensions();
+
+    let inside = x >= wx
+        && y >= wy
+        && x < wx.saturating_add(ww)
+        && y < wy.saturating_add(wh);
+
+    inside.then(|| watermark.get_pixel(x - wx, y - wy).to_rgba())
+}
+
+/// Tentukan pixel output pada (x,y)
+fn blend_at(
+    base: &DynamicImage,
+    watermark: &DynamicImage,
+    pos: (u32, u32),
+    opacity: f32,
+    x: u32,
+    y: u32,
+) -> Rgba<u8> {
+    let base_px = base.get_pixel(x, y).to_rgba();
+
+    match watermark_pixel_at(watermark, pos, x, y) {
+        None => base_px,
+        Some(wm_px) => blend_rgba(base_px, wm_px, opacity),
+    }
+}
+
+/// Resize watermark relatif terhadap lebar gambar dasar
+fn resize_watermark_relative(
+    watermark: &DynamicImage,
+    base_width: u32,
+    ratio: f32,
+) -> Result<DynamicImage, AppError> {
+    let (wm_w, wm_h) = watermark.dimensions();
+
+    if wm_w == 0 || wm_h == 0 || base_width == 0 {
+        return Err(AppError::BadRequest(
+            "Ukuran gambar watermark atau base tidak valid".into(),
+        ));
+    }
+
+    let new_w = max1((base_width as f32 * ratio).round() as u32);
+    let new_h = max1(((new_w as f32) * (wm_h as f32 / wm_w as f32)).round() as u32);
+
+    Ok(watermark.resize(new_w, new_h, FilterType::Lanczos3))
+}
+
+/* =========================================================
+   ORCHESTRATOR
+   ========================================================= */
+
+/// Fungsi utama untuk memberi watermark pada gambar.
+///
+/// Memanggil helper:
+/// 1) `clamp01` → normalisasi opacity
+/// 2) `resize_watermark_relative` → resize watermark
+/// 3) `bottom_right_position` → hitung posisi watermark
+/// 4) `blend_at` → menghitung pixel output
 pub fn apply_watermark(
     base: &DynamicImage,
     watermark: &DynamicImage,
     opacity: f32,
     margin: u32,
-) -> DynamicImage {
-    let (bw, bh) = base.dimensions();
-    
-    let watermark_resized = resize_watermark(watermark, bw);
-    
-    let (ww, wh) = watermark_resized.dimensions();
-    
-    let position = compute_position(bw, bh, ww, wh, margin);
+) -> Result<DynamicImage, AppError> {
+    let opacity = clamp01(opacity);
 
-    let output = ImageBuffer::from_fn(bw, bh, |x, y| {
-        blend_pixel(base, &watermark_resized, position, opacity, x, y)
+    let (bw, bh) = base.dimensions();
+    let resized = resize_watermark_relative(watermark, bw, WATERMARK_RATIO)?;
+
+    let (ww, wh) = resized.dimensions();
+    let pos = bottom_right_position(bw, bh, ww, wh, margin);
+
+    let out = ImageBuffer::from_fn(bw, bh, |x, y| {
+        blend_at(base, &resized, pos, opacity, x, y)
     });
 
-    DynamicImage::ImageRgba8(output)
-}
-
-fn resize_watermark(watermark: &DynamicImage, base_width: u32) -> DynamicImage {
-    let (wm_width, wm_height) = watermark.dimensions();
-    
-    let new_width = (base_width as f32 * 0.20) as u32;
-    
-    let aspect_ratio = wm_height as f32 / wm_width as f32;
-    let new_height = (new_width as f32 * aspect_ratio) as u32;
-    
-    watermark.resize(new_width, new_height, FilterType::Lanczos3)
-}
-
-fn compute_position(
-    base_width: u32,
-    base_height: u32,
-    wm_width: u32,
-    wm_height: u32,
-    margin: u32,
-) -> (u32, u32) {
-    (
-        base_width.saturating_sub(wm_width + margin),
-        base_height.saturating_sub(wm_height + margin),
-    )
-}
-
-fn blend_pixel(
-    base: &DynamicImage,
-    watermark: &DynamicImage,
-    (wx, wy): (u32, u32),
-    opacity: f32,
-    x: u32,
-    y: u32,
-) -> Rgba<u8> {
-    let base_px = base.get_pixel(x, y);
-    let (ww, wh) = watermark.dimensions();
-
-    let is_inside_watermark =
-        x >= wx && x < wx + ww &&
-        y >= wy && y < wy + wh;
-
-    if !is_inside_watermark {
-        return base_px;
-    }
-
-    let wm_px = watermark.get_pixel(x - wx, y - wy);
-    let alpha = (wm_px.0[3] as f32 * opacity) / 255.0;
-
-    Rgba([
-        blend_channel(base_px.0[0], wm_px.0[0], alpha),
-        blend_channel(base_px.0[1], wm_px.0[1], alpha),
-        blend_channel(base_px.0[2], wm_px.0[2], alpha),
-        255,
-    ])
-}
-
-fn blend_channel(base: u8, wm: u8, alpha: f32) -> u8 {
-    (base as f32 * (1.0 - alpha) + wm as f32 * alpha) as u8
+    Ok(DynamicImage::ImageRgba8(out))
 }
