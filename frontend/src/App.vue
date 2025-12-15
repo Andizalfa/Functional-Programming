@@ -5,6 +5,7 @@ const photos = ref([])
 const watermark = ref(null)
 const processing = ref(false)
 const message = ref('')
+const processTime = ref(null)
 
 const fotoInput = ref(null)
 const watermarkInput = ref(null)
@@ -25,6 +26,7 @@ const startProcess = async () => {
 
   processing.value = true
   message.value = ''
+  processTime.value = null
 
   const form = new FormData()
   photos.value.forEach((file) => form.append('photos', file))
@@ -35,6 +37,14 @@ const startProcess = async () => {
       method: 'POST',
       body: form,
     })
+
+    // Ambil waktu proses dari header
+    const time = res.headers.get('x-process-time')
+    console.log('Process time from header:', time)
+    if (time) {
+      processTime.value = parseFloat(time)
+      console.log('Process time set to:', processTime.value)
+    }
 
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
@@ -101,6 +111,12 @@ const startProcess = async () => {
       </button>
 
       <p class="message">{{ message }}</p>
+      
+      <div v-if="processTime !== null" class="process-time">
+        <span class="lightning">⚡</span>
+        <span class="time-label">Waktu Proses:</span>
+        <span class="time-value">{{ processTime.toFixed(5) }} detik</span>
+      </div>
     </div>
   </div>
 </template>
@@ -197,6 +213,33 @@ body,
   color: #ff7f7f;
   font-size: 13px;
   min-height: 18px;
+}
+
+.process-time {
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: rgba(77, 163, 255, 0.1);
+  border: 1px solid rgba(77, 163, 255, 0.3);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.lightning {
+  font-size: 18px;
+}
+
+.time-label {
+  color: #4da3ff;
+  font-weight: 600;
+}
+
+.time-value {
+  color: #fff;
+  font-weight: 700;
+  margin-left: auto;
 }
 
 @keyframes fadeIn {

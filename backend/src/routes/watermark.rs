@@ -6,6 +6,8 @@ use axum::response::IntoResponse;
 use crate::services::watermark_service::process_multiprocess;
 // Mengimpor PathBuf untuk merepresentasikan path file sistem
 use std::path::PathBuf;
+// Mengimpor untuk tracking waktu proses
+use std::time::Instant;
 // Mengimpor Multipart untuk menerima file upload
 use axum::extract::Multipart;
 // Mengimpor fungsi untuk ZIP dan file I/O
@@ -131,6 +133,8 @@ fn write_file_to_zip<W: Write + std::io::Seek>(
 // Fungsi handler async untuk endpoint pemrosesan watermark
 // Business logic menggunakan immutable data structures dan pure functions
 pub async fn process_watermark(multipart: Multipart) -> impl IntoResponse {
+    // Mulai tracking waktu
+    let start_time = Instant::now();
     
     // Membuat folder tmp jika belum ada
     fs::create_dir_all("tmp").expect("Gagal membuat folder tmp");
@@ -164,8 +168,12 @@ pub async fn process_watermark(multipart: Multipart) -> impl IntoResponse {
         .await
         .expect("Gagal menyimpan ZIP");
 
-    // Buat response dengan ZIP file
-    create_zip_response(zip_path).await
+    // Hitung waktu proses
+    let duration = start_time.elapsed();
+    let duration_secs = duration.as_secs_f64();
+    
+    // Buat response dengan ZIP file dan waktu proses
+    create_zip_response_with_time(zip_path, duration_secs).await
 }
 
 // =====================================================================
@@ -232,16 +240,25 @@ async fn extract_with_mut(
     results
 }
 
-// Fungsi untuk membuat ZIP response
-async fn create_zip_response(zip_path: PathBuf) -> axum::response::Response {
+// Fungsi untuk membuat ZIP response dengan waktu proses
+async fn create_zip_response_with_time(zip_path: PathBuf, duration_secs: f64) -> axum::response::Response {
     let file = tokio::fs::File::open(&zip_path).await.unwrap();
     let stream = ReaderStream::new(file);
     let body = Body::from_stream(stream);
 
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/zip"),
-         (header::CONTENT_DISPOSITION, "attachment; filename=\"hasil_watermark.zip\"")],
-        body,
-    ).into_response()
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE, 
+        axum::http::HeaderValue::from_static("application/zip")
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION, 
+        axum::http::HeaderValue::from_static("attachment; filename=\"hasil_watermark.zip\"")
+    );
+    headers.insert(
+        axum::http::HeaderName::from_static("x-process-time"),
+        axum::http::HeaderValue::from_str(&format!("{:.5}", duration_secs)).unwrap()
+    );
+
+    (StatusCode::OK, headers, body).into_response()
 }
