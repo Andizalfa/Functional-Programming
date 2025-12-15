@@ -140,36 +140,29 @@ async fn collect_uploaded_files(multipart: Multipart) -> Vec<UploadedFile> {
 async fn extract_fields_from_multipart(
     multipart: Multipart,
 ) -> Vec<(String, String, bytes::Bytes)> {
-    let results = Vec::new();
-    let multipart = multipart;
-    
-    extract_with_mut(multipart, results).await
+    extract_with_mut(multipart).await
 }
 
 async fn extract_with_mut(
     multipart: Multipart,
-    results: Vec<(String, String, bytes::Bytes)>,
 ) -> Vec<(String, String, bytes::Bytes)> {
-    let mut multipart = multipart;
-    let mut results = results;
+    use futures::stream::StreamExt;
     
-    loop {
-        match multipart.next_field().await {
+    let stream = futures::stream::unfold(multipart, |mut mp| async move {
+        match mp.next_field().await {
             Ok(Some(field)) => {
                 let name = field.name().unwrap_or("").to_string();
                 let filename = field.file_name().unwrap_or("unknown").to_string();
                 match field.bytes().await {
-                    Ok(data) => {
-                        results.push((name, filename, data));
-                    }
-                    Err(_) => {}
+                    Ok(data) => Some(((name, filename, data), mp)),
+                    Err(_) => None
                 }
             }
-            _ => break,
+            _ => None,
         }
-    }
+    });
     
-    results
+    stream.collect::<Vec<_>>().await
 }
 
 async fn create_zip_response_with_time(zip_path: PathBuf, duration_secs: f64) -> axum::response::Response {
