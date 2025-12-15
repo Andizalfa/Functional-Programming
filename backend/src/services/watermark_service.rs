@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::process::Command;
 // Mengimpor Uuid untuk menghasilkan identifier unik untuk nama file output
 use uuid::Uuid;
+// Mengimpor fs untuk operasi file system
+use std::fs;
 
 // Fungsi publik untuk memproses banyak gambar dengan watermark secara multiprocess
 // Parameter:
@@ -15,6 +17,9 @@ pub fn process_multiprocess(
     watermark: PathBuf,        // Path file watermark
 ) -> Vec<PathBuf> {            // Mengembalikan vector path file output
 
+    // Membuat folder tmp jika belum ada
+    fs::create_dir_all("tmp").expect("Gagal membuat folder tmp");
+
     // Mengkonversi vector images menjadi iterator untuk diproses satu per satu
     images
         .into_iter()
@@ -25,7 +30,7 @@ pub fn process_multiprocess(
             let output = PathBuf::from(format!("tmp/{}.png", Uuid::new_v4()));
 
             // Membuat command baru untuk menjalankan cargo
-            Command::new("cargo")
+            let status = Command::new("cargo")
                 // Menambahkan argumen-argumen untuk cargo command
                 .args([
                     "run",                              // Subcommand cargo untuk menjalankan binary
@@ -35,10 +40,15 @@ pub fn process_multiprocess(
                     watermark.to_str().unwrap(),       // Path watermark (dikonversi ke string)
                     output.to_str().unwrap(),          // Path output (dikonversi ke string)
                 ])
-                // Spawn (jalankan) proses secara asinkron tanpa menunggu selesai
-                .spawn()
-                // Jika spawn gagal, panic dengan pesan error
-                .expect("Gagal spawn worker process");
+                // Wait (tunggu) proses hingga selesai dan dapatkan status
+                .status()
+                // Jika gagal menjalankan command, panic dengan pesan error
+                .expect("Gagal menjalankan worker process");
+
+            // Cek apakah proses berhasil
+            if !status.success() {
+                panic!("Worker process gagal untuk {:?}", img);
+            }
 
             // Mengembalikan path output untuk setiap gambar yang diproses
             output

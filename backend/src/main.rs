@@ -1,11 +1,7 @@
 use axum::Router;
 use tower_http::cors::CorsLayer;
-
-mod routes;
-mod services;
-mod utils;
-
 use axum::extract::DefaultBodyLimit;
+use backend::routes;
 
 #[tokio::main]
 async fn main() {

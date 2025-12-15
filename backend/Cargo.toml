@@ -2,13 +2,26 @@
 name = "backend"
 version = "0.1.0"
 edition = "2024"
+default-run = "backend"
+
+[[bin]]
+name = "backend"
+path = "src/main.rs"
+
+[[bin]]
+name = "watermark_worker"
+path = "src/worker.rs"
 
 [dependencies]
 axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.5", features = ["cors"] }
 image = "0.24"
 rayon = "1.8"
 zip = "0.6"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 multer = "2.1"
+futures = "0.3"
+bytes = "1.5"

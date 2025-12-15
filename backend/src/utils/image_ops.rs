@@ -2,7 +2,7 @@
 // GenericImageView untuk mendapatkan dimensi dan pixel dari gambar
 // ImageBuffer untuk membuat buffer gambar baru
 // Rgba untuk merepresentasikan pixel dengan 4 channel (Red, Green, Blue, Alpha)
-use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
+use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba, imageops::FilterType};
 
 // =====================================================================
 // PUBLIC PURE API
@@ -27,8 +27,14 @@ pub fn apply_watermark(
 ) -> DynamicImage {                // Mengembalikan gambar baru bertipe DynamicImage
     // Mendapatkan lebar (bw) dan tinggi (bh) dari gambar dasar
     let (bw, bh) = base.dimensions();
-    // Mendapatkan lebar (ww) dan tinggi (wh) dari gambar watermark
-    let (ww, wh) = watermark.dimensions();
+    
+    // Resize watermark agar proporsional dengan gambar dasar
+    // Watermark akan berukuran 20% dari lebar gambar dasar
+    let watermark_resized = resize_watermark(watermark, bw);
+    
+    // Mendapatkan lebar (ww) dan tinggi (wh) dari gambar watermark yang sudah diresize
+    let (ww, wh) = watermark_resized.dimensions();
+    
     // Menghitung posisi watermark di pojok kanan bawah dengan mempertimbangkan margin
     let position = compute_position(bw, bh, ww, wh, margin);
 
@@ -37,7 +43,7 @@ pub fn apply_watermark(
     let output = ImageBuffer::from_fn(bw, bh, |x, y| {
         // Untuk setiap pixel pada posisi (x, y), panggil fungsi blend_pixel
         // untuk mencampur pixel gambar dasar dengan watermark
-        blend_pixel(base, watermark, position, opacity, x, y)
+        blend_pixel(base, &watermark_resized, position, opacity, x, y)
     });
 
     // Mengkonversi ImageBuffer menjadi DynamicImage dengan format RGBA8
@@ -49,6 +55,25 @@ pub fn apply_watermark(
 // HELPER PURE FUNCTIONS (PRIVATE)
 // =====================================================================
 //
+
+// -----------------------------------------------------
+// Resize watermark agar proporsional dengan gambar base
+// -----------------------------------------------------
+// Fungsi untuk meresize watermark agar ukurannya proporsional
+// Watermark akan berukuran 20% dari lebar gambar dasar
+fn resize_watermark(watermark: &DynamicImage, base_width: u32) -> DynamicImage {
+    let (wm_width, wm_height) = watermark.dimensions();
+    
+    // Hitung lebar baru watermark (20% dari lebar base)
+    let new_width = (base_width as f32 * 0.20) as u32;
+    
+    // Hitung tinggi baru dengan mempertahankan aspect ratio
+    let aspect_ratio = wm_height as f32 / wm_width as f32;
+    let new_height = (new_width as f32 * aspect_ratio) as u32;
+    
+    // Resize watermark menggunakan filter Lanczos3 untuk kualitas terbaik
+    watermark.resize(new_width, new_height, FilterType::Lanczos3)
+}
 
 // -----------------------------------------------------
 // Hitung posisi watermark (pojok kanan bawah)

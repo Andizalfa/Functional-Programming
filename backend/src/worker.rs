@@ -1,6 +1,5 @@
-use std::{env, fs};
-use image::DynamicImage;
-use crate::utils::image_ops::apply_watermark;
+use std::env;
+use backend::utils::image_ops::apply_watermark;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
