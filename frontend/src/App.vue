@@ -1,11 +1,14 @@
 <script setup>
 import { ref } from 'vue'
+import JSZip from 'jszip'
 
 const photos = ref([])
 const watermark = ref(null)
 const processing = ref(false)
 const message = ref('')
-const processTime = ref(null)
+const processTime = ref(null) // total process time from header
+const startTime = ref(null) // timestamp when user started
+const perPhotos = ref([]) // list of { name, status, duration }
 
 const fotoInput = ref(null)
 const watermarkInput = ref(null)
@@ -28,6 +31,15 @@ const startProcess = async () => {
   message.value = ''
   processTime.value = null
 
+  // Set start time and per-photo initial status
+  startTime.value = Date.now()
+  perPhotos.value = photos.value.map((file, i) => ({
+    name: file.name,
+    index: i + 1,
+    status: 'queued',
+    duration: null,
+  }))
+
   const form = new FormData()
   photos.value.forEach((file) => form.append('photos', file))
   form.append('watermark', watermark.value)
@@ -38,24 +50,51 @@ const startProcess = async () => {
       body: form,
     })
 
-    // Ambil waktu proses dari header
+    // Ambil waktu proses dari header (total)
     const time = res.headers.get('x-process-time')
-    console.log('Process time from header:', time)
-    if (time) {
-      processTime.value = parseFloat(time)
-      console.log('Process time set to:', processTime.value)
+    if (time) processTime.value = parseFloat(time)
+
+    // Ambil blob ZIP
+    const blob = await res.blob()
+
+    // Baca manifest.json dari ZIP menggunakan JSZip
+    try {
+      const zip = await JSZip.loadAsync(blob)
+      const manifestFile = zip.file('manifest.json')
+      if (manifestFile) {
+        const manifestText = await manifestFile.async('string')
+        try {
+          const manifest = JSON.parse(manifestText)
+          // manifest is expected to be array of {file, duration}
+          manifest.forEach((item) => {
+            // file name is watermarked_<index>.png
+            const m = item.file.match(/watermarked_(\d+)\.png/)
+            if (m) {
+              const idx = parseInt(m[1], 10) - 1
+              if (perPhotos.value[idx]) {
+                perPhotos.value[idx].status = 'done'
+                perPhotos.value[idx].duration = item.duration
+              }
+            }
+          })
+        } catch (e) {
+          console.warn('Gagal parse manifest.json', e)
+        }
+      }
+    } catch (e) {
+      console.warn('Gagal baca ZIP manifest', e)
     }
 
-    const blob = await res.blob()
+    // Download ZIP file
     const url = URL.createObjectURL(blob)
-
     const a = document.createElement('a')
     a.href = url
     a.download = 'hasil_watermark.zip'
     a.click()
 
     message.value = 'Berhasil! ZIP berhasil didownload.'
-  } catch {
+  } catch (err) {
+    console.error(err)
     message.value = 'Gagal memproses foto.'
   }
 
@@ -112,9 +151,29 @@ const startProcess = async () => {
 
       <p class="message">{{ message }}</p>
       
+      <div v-if="startTime" class="process-time">
+        <span class="lightning">🕒</span>
+        <span class="time-label">Waktu Mulai:</span>
+        <span class="time-value">{{ new Date(startTime).toLocaleTimeString() }}</span>
+      </div>
+
+      <div v-if="perPhotos.length" style="margin-top:12px; text-align:left;">
+        <h4 style="color:#ddd; margin:8px 0">Status Per Foto</h4>
+        <ul style="list-style:none; padding:0; margin:0;">
+          <li v-for="p in perPhotos" :key="p.index" style="display:flex; gap:8px; align-items:center; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.04)">
+            <div style="width:28px; text-align:center; color:#aaa">#{{ p.index }}</div>
+            <div style="flex:1; color:#fff">{{ p.name }}</div>
+            <div style="width:140px; text-align:right; color:#9bd1ff">
+              <template v-if="p.status === 'done'">{{ p.duration.toFixed(5) }} s</template>
+              <template v-else>{{ p.status }}</template>
+            </div>
+          </li>
+        </ul>
+      </div>
+
       <div v-if="processTime !== null" class="process-time">
         <span class="lightning">⚡</span>
-        <span class="time-label">Waktu Proses:</span>
+        <span class="time-label">Waktu Proses (total):</span>
         <span class="time-value">{{ processTime.toFixed(5) }} detik</span>
       </div>
     </div>

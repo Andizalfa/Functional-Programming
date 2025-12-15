@@ -11,11 +11,11 @@ use std::fs;
 // Parameter:
 // - images: vector berisi path gambar-gambar yang akan diberi watermark
 // - watermark: path file watermark yang akan ditempelkan
-// Mengembalikan vector berisi path file hasil pemrosesan
+// Mengembalikan vector berisi tuple (path file hasil, durasi pemrosesan dalam detik)
 pub fn process_multiprocess(
     images: Vec<PathBuf>,      // Vector berisi path gambar-gambar input
     watermark: PathBuf,        // Path file watermark
-) -> Vec<PathBuf> {            // Mengembalikan vector path file output
+) -> Vec<(PathBuf, f64)> {     // Mengembalikan vector tuple (path output, durasi detik)
 
     // Membuat folder tmp jika belum ada
     fs::create_dir_all("tmp").expect("Gagal membuat folder tmp");
@@ -25,6 +25,9 @@ pub fn process_multiprocess(
         .into_iter()
         // Memetakan setiap gambar (img) ke operasi pemrosesan
         .map(|img| {
+            // Mulai tracking waktu untuk foto ini
+            let start = std::time::Instant::now();
+
             // Membuat path output unik menggunakan UUID random
             // Format: tmp/<uuid-random>.png
             let output = PathBuf::from(format!("tmp/{}.png", Uuid::new_v4()));
@@ -50,9 +53,13 @@ pub fn process_multiprocess(
                 panic!("Worker process gagal untuk {:?}", img);
             }
 
-            // Mengembalikan path output untuk setiap gambar yang diproses
-            output
+            // Hitung durasi pemrosesan foto ini
+            let duration = start.elapsed();
+            let duration_secs = duration.as_secs_f64();
+
+            // Mengembalikan tuple (path output, durasi) untuk setiap gambar yang diproses
+            (output, duration_secs)
         })
-        // Mengumpulkan semua hasil map menjadi vector PathBuf
+        // Mengumpulkan semua hasil map menjadi vector tuple (PathBuf, f64)
         .collect()
 }
